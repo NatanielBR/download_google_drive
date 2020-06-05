@@ -1,57 +1,72 @@
-'''
-Guide for usage:
-In your terminal, run the command:
-
-python download_gdrive.py GoogleFileID /path/for/this/file/to/download/file.type
-
-Credited to 
-https://stackoverflow.com/questions/25010369/wget-curl-large-file-from-google-drive
-author: https://stackoverflow.com/users/1475331/user115202
-'''
-
+import re
+import httplib2
 import requests
 
-from tqdm import tqdm
 
-def download_file_from_google_drive(id, destination):
-    def get_confirm_token(response):
+
+class Drive:
+    def __get_confirm_token(self, response):
+        '''
+        Method to receive a token from google to confirm
+        the download
+        :param response:
+        :return a token String or None if token is not found:
+        '''
         for key, value in response.cookies.items():
             if key.startswith('download_warning'):
                 return value
 
         return None
 
-    def save_response_content(response, destination):
-        CHUNK_SIZE = 32768
+    def get_download_link_direct(self, id):
+        """
+        Method to get a download link from id.
+        Note: If video, the link not contains quality
+        indicator.
+        :param id of file:
+        :return the link for download:
+        """
+        URL = "https://docs.google.com/uc?export=download"
 
-        with open(destination, "wb") as f:
-            with tqdm(unit='B', unit_scale=True, unit_divisor=1024) as bar:
-                for chunk in response.iter_content(CHUNK_SIZE):
-                    if chunk:  # filter out keep-alive new chunks
-                        f.write(chunk)
-                        bar.update(CHUNK_SIZE)
+        session = requests.Session()
 
-    URL = "https://docs.google.com/uc?export=download"
+        response = session.get(URL, params={'id': id}, stream=True)
+        token = self.__get_confirm_token(response)
 
-    session = requests.Session()
+        if token:
+            params = {'id': id, 'confirm': token}
+            response = session.get(URL, params=params, stream=True)
+        return response.url
 
-    response = session.get(URL, params = { 'id' : id }, stream = True)
-    token = get_confirm_token(response)
+    def video_stream(self, id):
+        """
+        Method to get stream url from video id but in my tests
+        its not work :(.
+        :param id Video ID:
+        :return The dictionary with quality indicator as key and url as value.:
+        """
+        # requests not work appropriately, but httplib2 works!
+        h = httplib2.Http('.cache')
+        data = h.request(f'https://drive.google.com/file/d/{id}/view?pli=1')[1].decode('unicode_escape')
+        data = data.split(',["fmt_stream_map","')
+        data = data[1].split('"]')
 
-    if token:
-        params = { 'id' : id, 'confirm' : token }
-        response = session.get(URL, params = params, stream = True)
+        data = data[0]
 
-    save_response_content(response, destination)    
+        data = str(data).split(',')
+        data.sort()
+        saida = {}
+        for list in data:
+            data2 = list.split('|')
+            data2[0] = data2[0].replace("'", '')
+            data2[0] = int(data2[0])
+            if data2[0] == 37:
+                saida['1080p'] = (re.sub("/\/[^\/]+\.google\.com/", "/redirector.googlevideo.com/", data2[1]))
+            elif data2[0] == 22:
+                saida['720p'] = (re.sub("/\/[^\/]+\.google\.com/", "/redirector.googlevideo.com/", data2[1]))
+            elif data2[0] == 59:
+                saida['720p'] = (re.sub("/\/[^\/]+\.google\.com/", "/redirector.googlevideo.com/", data2[1]))
+            elif data2[0] == 18:
+                saida['360p'] = (re.sub("/\/[^\/]+\.google\.com/", "/redirector.googlevideo.com/", data2[1]))
 
-
-if __name__ == "__main__":
-    import sys
-    if len(sys.argv) is not 3:
-        print("Usage: python google_drive.py drive_file_id destination_file_path")
-    else:
-        # TAKE ID FROM SHAREABLE LINK
-        file_id = sys.argv[1]
-        # DESTINATION FILE ON YOUR DISK
-        destination = sys.argv[2]
-        download_file_from_google_drive(file_id, destination)
+        return saida
